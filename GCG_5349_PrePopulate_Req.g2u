@@ -1,0 +1,162 @@
+﻿Program.Sub.Preflight.Start
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'BN, Nov 7, 2018
+'This project will prepopulate values at screen Purchasing > File > Purchase Requisitions > Open/New when the line/part is a new entry.
+
+'The Tax-code seems to be impossible to set. That is because this field is not accessible to be changed. And even if it is changeable, we need to implement the same process as the core, meaning that we need to calculate the tax and set the calculated fields back to the screen.
+'Currently, the core is using program PUR825. The scope of this project is only 4 hours for all, if we implemented some similar process, it would be much more hours.
+
+'Variable.Passed.000202: TAX-CODE
+'Variable.Passed.000181: TAXABLE Checkbox
+
+'Addition to project by FEQ - When part get's populated, we are copying the value of Originated By to the Sort Code textbox - Addition for Caragh
+
+'New Addition 4/11/23
+'Developer: Angel Tudon
+'Customer: Caragh Precision
+'Ticket: https://www.gss-service.com/Calls/CallEditInternalOpen/1380102
+'Quote: 14084-0
+'This project will add the following modification: When a multi line requisition is being created, we will make the Vendor No and Vendor Name fields populate with the previous' line data so that it does not have to be entered at each new line.
+
+'V.Passed.000033 - Vendor Number
+'V.Passed.000035 - Vendor Name
+'V.Passed.GLOBAL - Variable can be used carry values through out thread
+
+f.Intrinsic.Control.Try
+	v.Local.sError.Declare
+	v.Local.dDueDate.Declare
+	v.Local.sDueDate.Declare
+	V.Local.sGlobal.Declare(String)
+	V.Local.sVendorInfo.Declare(String)
+	
+	F.Intrinsic.Control.SelectCase(V.Caller.Hook)
+	
+		F.Intrinsic.Control.Case(16200)
+			f.Intrinsic.Control.CallSub("Verify_NewLine")
+			'If the line does not exist/is saved yet, prepopulate values
+			
+			f.Intrinsic.Control.If(v.Args.bExist.Not)
+				'Add 7 business days to present date to generate due date
+				F.Intrinsic.Date.DateAddWorkdays(V.Ambient.Date, 7, V.Local.dDueDate)
+				f.Intrinsic.String.Format(v.Local.dDueDate,"YYYYMMDD",v.Local.sDueDate)
+				'Set Due Date
+				Variable.Passed.000005.Set(v.Local.sDueDate)
+				'Set Inv UM
+				Variable.Passed.000055.Set("EA")
+				'Set PO UM
+				Variable.Passed.000047.Set("EA")
+				'Set Sort Code (addition by FEQ on 12/22/2020)
+				V.Passed.000031.Set(V.Passed.000006)
+				
+				'Call CheckVendor sub if we are opening existing req number
+				F.Intrinsic.Control.If(V.Caller.Switches, =, "O", AND, V.Passed.GLOBAL, =, "This variable will retain its value through out the thread")
+					'Call check vendor to capture vendor used in last line of selected requisition
+					F.Intrinsic.Control.CallSub(CheckVendor)
+				F.Intrinsic.Control.EndIf
+				
+				'Set vendor from previous requisiton line
+				F.Intrinsic.Control.If(V.Passed.GLOBAL, <>, "This variable will retain its value through out the thread")
+					V.Passed.000033.Set(V.Passed.GLOBAL)
+					
+				F.Intrinsic.Control.EndIf
+			f.Intrinsic.Control.EndIf
+			
+		F.Intrinsic.Control.Case(16244)
+			'Save current line's selected vendor number onto V.Passed.GLOBAL to retain for next line
+			V.Passed.GLOBAL.Set(V.Passed.000033)
+	
+	F.Intrinsic.Control.EndSelect
+
+F.Intrinsic.Control.Catch
+	Function.Intrinsic.String.Build("Subroutine Error {0}{0}Subroutine: {1}{0}Error Occurred {2} with description {3}",V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.CallSub("Unload")	
+F.Intrinsic.Control.EndTry
+
+Program.Sub.Main.End
+
+Program.Sub.CheckVendor.Start
+F.Intrinsic.Control.Try
+	
+	'V.Passed.000003 - Requisition number
+	V.Local.sSql.Declare(String)
+	V.Local.sReqLine.Declare(String)
+	V.Local.sVendorNo.Declare(String)
+	
+	F.ODBC.Connection!con.OpenCompanyConnection
+	
+	'Capture last line of selected requisition
+	F.Intrinsic.String.Build("Select TOP 1 PO_REQ_LINE from PURCHASE_REQS where PO_REQ_NUMBER = '{0}' order by PO_REQ_LINE desc", V.Passed.000003, V.Local.sSql)
+	F.ODBC.Connection!con.ExecuteAndReturn(V.Local.sSql, V.Local.sReqLine)
+	'Capture vendor used in last line of requisition
+	F.Intrinsic.String.Build("Select VENDOR from PURCHASE_REQS where PO_REQ_NUMBER = '{0}' AND PO_REQ_LINE = '{1}'", V.Passed.000003, V.Local.sReqLine, V.Local.sSql)
+	F.ODBC.Connection!con.ExecuteAndReturn(V.Local.sSql, V.Local.sVendorNo)
+	'Set returned vendor to GLOBAL variable to use in new lines
+	V.Passed.GLOBAL.Set(V.Local.sVendorNo)
+	
+	F.ODBC.Connection!con.Close
+
+F.Intrinsic.Control.Catch
+	Function.Intrinsic.String.Build("Subroutine Error {0}{0}Subroutine: {1}{0}Error Occurred {2} with description {3}",V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.CallSub("Unload")	
+F.Intrinsic.Control.EndTry
+Program.Sub.CheckVendor.End
+
+Program.Sub.Verify_NewLine.Start
+'Verify if the underline Req,Line,Part,Loc exists
+'Variable.Passed.000003: Req number
+'Variable.Passed.000001: Req line
+'Variable.Passed.000013: Part 17
+'Variable.Passed.000014: Rev 3
+'Variable.Passed.000016: Loc
+f.Intrinsic.Control.Try
+	v.Local.sError.Declare
+	v.Local.sLine.Declare
+	v.Local.sPart.Declare
+	v.Local.sSQL.Declare
+	v.Local.bExist.Declare
+	v.Local.sRet.Declare
+	
+	f.Intrinsic.String.LPad(Variable.Passed.000001,"0",3,v.Local.sLine)
+	f.Intrinsic.String.GSSPartString(Variable.Passed.000013,Variable.Passed.000014,v.Local.sPart)		
+	f.Intrinsic.String.Build("select * from purchase_reqs where PO_REQ_NUMBER = '{0}' and PO_REQ_LINE = '{1}' and PART = '{2}' AND LOCATION = '3}'",Variable.Passed.000003,v.Local.sLine,v.Local.sPart,Variable.Passed.000016,v.Local.sSQL)
+	f.ODBC.Connection!conx.OpenCompanyConnection
+		f.ODBC.Connection!conx.ExecuteAndReturn(v.Local.sSQL,v.Local.sRet)
+		f.Intrinsic.Control.If(v.Local.sRet,<>,"")
+			v.Local.bExist.Set(True)
+		f.Intrinsic.Control.EndIf
+	f.ODBC.Connection!conx.Close
+	f.Intrinsic.Variable.AddRV("bExist",v.Local.bExist)
+
+F.Intrinsic.Control.Catch
+	Function.Intrinsic.String.Build("Subroutine Error {0}{0}Subroutine: {1}{0}Error Occurred {2} with description {3}",V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.CallSub("Unload")	
+F.Intrinsic.Control.EndTry
+
+Program.Sub.Verify_NewLine.End
+
+Program.Sub.UnLoad.Start
+f.Intrinsic.Control.Try
+	v.Local.sError.Declare
+
+	F.Intrinsic.Control.If(V.ODBC.conx.State,=,1)
+		F.ODBC.Connection!conx.close
+	F.Intrinsic.Control.EndIf
+	
+	f.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+	Function.Intrinsic.String.Build("Subroutine Error {0}{0}Subroutine: {1}{0}Error Occurred {2} with description {3}",V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End	
+F.Intrinsic.Control.EndTry
+Program.Sub.UnLoad.End
+
+Program.Sub.Comments.Start
+${$5$}$2.0.0.0$}$2
+${$6$}$Angel$}$20230412161523864$}$KXl0r/FkrMYwb/r4ukQ87VNzvoHa8Zo7t6r7z8/K7Wq5QJqzHBDGZ/nOSdGQkofACMBp+BnaJoc=
+Program.Sub.Comments.End
